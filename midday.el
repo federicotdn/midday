@@ -1,10 +1,56 @@
-;;; midday.el --- Clean up unused buffers -*- lexical-binding: t -*-
+;;; midday.el --- Clean up unneeded buffers -*- lexical-binding: t -*-
+
+;; Copyright (C) 2024  Federico Tedin
+
+;; Author: Federico Tedin <federicotedin@gmail.com>
+;; Maintainer: Federico Tedin <federicotedin@gmail.com>
+;; Homepage: https://github.com/federicotdn/midday
+;; Keywords: tools
+;; Package-Version: 1.0.0
+;; Package-Requires: ((emacs "26.3"))
+
+;; This file is NOT part of GNU Emacs.
+
+;; midday is free software; you can redistribute it and/or modify it
+;; under the terms of the GNU General Public License as published by
+;; the Free Software Foundation; either version 3, or (at your option)
+;; any later version.
+;;
+;; midday is distributed in the hope that it will be useful, but WITHOUT
+;; ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+;; or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public
+;; License for more details.
+;;
+;; You should have received a copy of the GNU General Public License
+;; along with midday.  If not, see http://www.gnu.org/licenses.
+
+;;; Commentary:
+
+;; Midday allows you to quickly and easily clean (kill) any buffers
+;; which you might not need anymore, based on a set of user-defined
+;; predicates.
+
+;;; Code:
+
+(defgroup midday nil
+  "A tool for quickly cleaning up unneeded buffers."
+  :prefix "midday-"
+  :group 'tools)
+
+(defcustom midday-confirm-kill 'y-or-n-p
+  "How to ask for confirmation when killing buffers.
+If set to nil, midday will not ask for confirmation.  If the value is
+non-nil, it should be set to a predicate function, like `y-or-n-p'."
+  :type '(choice (const :tag "No confirmation" nil)
+                 (function :tag "Confirmation function")))
 
 (cl-defstruct midday--predicate function type name)
 
 (defalias 'midday-predicate #'make-midday--predicate)
 
 (defvar midday-predicates nil)
+
+(defvar midday-debug nil)
 
 (defvar-local midday--protected nil)
 
@@ -60,6 +106,11 @@
     (lambda (buf)
       (string-match buf-name-regexp (buffer-name buf)))))
 
+(defun midday-buffer-local-variable-bound-and-set (symbol)
+  (lambda (buf)
+    (when (buffer-local-boundp symbol buf)
+      (buffer-local-value symbol buf))))
+
 (setq midday-predicates
       (list
        (midday-predicate :function (midday-empty-buffer-matcher)
@@ -86,7 +137,7 @@
        (midday-predicate :function (midday-empty-undo-list-matcher)
                          :type 'kill
                          :name "Kill empty undo list")
-       (midday-predicate :function (midday-buffer-name-regexp-matcher "^ ?\\*")
+       (midday-predicate :function (midday-buffer-name-regexp-matcher "^\\s-*\\*")
                          :type 'keep
                          :name "Keep special")
        (midday-predicate :function (midday-buffer-modified-matcher)
@@ -107,34 +158,65 @@
        (midday-predicate :function (midday-protected-matcher)
                          :type 'keep
                          :name "Keep protected")
+       (midday-predicate :function (midday-buffer-local-variable-bound-and-set 'bufmoji--original-name)
+                         :type 'keep
+                         :name "Keep bufmojified")
        ))
 
-(defun midday--any-predicate (predicate-type val)
-  "TODO"
+(defun midday--debug (format-string &rest args)
+  "Call `message' with FORMAT-STRING and ARGS if `midday-debug' is non-nil."
+  (when midday-debug
+    (apply #'message (concat "Midday: " format-string) args)))
+
+(defun midday--any-predicate (type buf)
+  "Return the first predicate of TYPE matching BUF in `midday-predicates'."
   (catch 'end
     (dolist (pred midday-predicates)
-      (when (and (eq (midday--predicate-type pred) predicate-type)
-                 (funcall (midday--predicate-function pred) val))
-        (message "matched %s %s" val (midday--predicate-name pred))
-        (throw 'end t)))))
+      (unless pred
+        (user-error "Nil predicate found in `midday-predicates'"))
+      (when (and (eq (midday--predicate-type pred) type)
+                 (funcall (midday--predicate-function pred) buf))
+        (throw 'end pred)))))
 
 (defun midday ()
-  "Clean up buffer list."
+  "Clean up unneeded buffers according to predicates in `midday-predicates'."
   (interactive)
-  (let ((kill-count 0))
+  (let (kill-list prompt)
     (dolist (buf (buffer-list))
-      (message "process %s" buf)
-      (when (and (midday--any-predicate 'kill buf)
-                 (not (midday--any-predicate 'keep buf)))
-        (message "Killing buffer %s" (buffer-name buf))
-        (kill-buffer buf)
-        (setq kill-count (1+ kill-count))))
-    (message "Killed %s buffers" kill-count)))
+      (let ((kill-match (midday--any-predicate 'kill buf))
+            (keep-match (midday--any-predicate 'keep buf)))
+        (if (and kill-match (not keep-match))
+            (progn
+              (midday--debug "Killing buffer: %s" (buffer-name buf))
+              (midday--debug " Reason: matched kill predicate: '%s'"
+                             (midday--predicate-name kill-match))
+              (push buf kill-list))
+          (midday--debug "Keep buffer: %s" (buffer-name buf))
+          (if keep-match
+              (midday--debug " Reason: matched keep predicate: '%s'"
+                             (midday--predicate-name keep-match))
+            (midday--debug " Reason: no kill predicate matched")))))
+    (setq prompt (concat (format "Kill %s buffer(s)? " (length kill-list))
+                         (string-join (mapcar (lambda (b)
+                                                (buffer-name b))
+                                              kill-list)
+                                      ", ")))
+    (if kill-list
+        (when (or (not midday-confirm-kill)
+                  (funcall midday-confirm-kill prompt))
+          (dolist (buf kill-list)
+            (kill-buffer buf))
+          (message "Killed %s buffer(s)" (length kill-list)))
+      (message "No buffers to kill"))))
 
 (defun midday-recover ()
   "TODO")
 
 (defun midday-protect ()
-  "TODO"
+  "Manually mark the current buffer as protected.
+Use the `midday-protected-matcher' predicate as `keep' to prevent
+midday from killing protected buffers."
   (interactive)
   (setq midday--protected t))
+
+;;; midday.el ends here
