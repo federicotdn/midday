@@ -46,7 +46,7 @@ non-nil, it should be set to a predicate function, like `y-or-n-p'."
 
 (cl-defstruct midday-predicate-item
   "Structure to hold predicate functions and their type.."
-  function type name)
+  function type name negate)
 
 (defalias 'midday-predicate #'make-midday-predicate-item
   "Alias to allow easier creation of predicate items.")
@@ -66,108 +66,95 @@ Setting `midday-predicates' to the result of calling this function
 will give you a useful starting point for using midday.  You can then
 freely add and remove predicates as needed."
   (list
-   (midday-predicate :function (midday-empty-buffer-matcher)
+   (midday-predicate :function (midday-matcher-empty-buffer)
                      :type 'kill
                      :name "Kill empty")
-   (midday-predicate :function (midday-major-mode-matcher 'dired-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'dired-mode)
                      :type 'kill
                      :name "Kill dired-mode")
-   (midday-predicate :function (midday-major-mode-matcher 'magit-log-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'magit-log-mode)
                      :type 'kill
                      :name "Kill magit-log-mode")
-   (midday-predicate :function (midday-major-mode-matcher 'magit-diff-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'magit-diff-mode)
                      :type 'kill
                      :name "Kill magit-diff-mode")
-   (midday-predicate :function (midday-major-mode-matcher 'magit-revision-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'magit-revision-mode)
                      :type 'kill
                      :name "Kill magit-revision-mode")
-   (midday-predicate :function (midday-major-mode-matcher 'magit-process-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'magit-process-mode)
                      :type 'kill
                      :name "Kill magit-process-mode")
-   (midday-predicate :function (midday-buffer-name-matcher "init.el")
+   (midday-predicate :function (midday-matcher-buffer-name "init.el")
                      :type 'kill
                      :name "Kill init.el")
-   (midday-predicate :function (midday-empty-undo-list-matcher)
+   (midday-predicate :function (midday-matcher-undo-list)
+                     :negate t
                      :type 'kill
                      :name "Kill empty undo list")
-   (midday-predicate :function (midday-buffer-name-regexp-matcher "^\\s-*\\*")
+   (midday-predicate :function (midday-matcher-buffer-name-regexp "^\\s-*\\*")
                      :type 'keep
                      :name "Keep special")
-   (midday-predicate :function (midday-buffer-modified-matcher)
+   (midday-predicate :function (midday-matcher-buffer-modified)
                      :type 'keep
                      :name "Keep modified")
-   (midday-predicate :function (midday-buffer-displayed-matcher)
+   (midday-predicate :function (midday-matcher-buffer-displayed)
                      :type 'keep
                      :name "Keep displayed")
-   (midday-predicate :function (midday-undo-list-matcher)
+   (midday-predicate :function (midday-matcher-undo-list)
                      :type 'keep
                      :name "Keep undo list nonempty")
-   (midday-predicate :function (midday-process-matcher)
+   (midday-predicate :function (midday-matcher-process)
                      :type 'keep
                      :name "Keep processes")
-   (midday-predicate :function (midday-major-mode-matcher 'org-mode)
+   (midday-predicate :function (midday-matcher-major-mode 'org-mode)
                      :type 'keep
                      :name "Keep org-mode")
-   (midday-predicate :function (midday-buffer-local-variable-bound-and-set 'midday-protected)
+   (midday-predicate :function (midday-matcher-buffer-local-value 'midday-protected)
                      :type 'keep
                      :name "Keep protected")
-   (midday-predicate :function (midday-buffer-local-variable-bound-and-set 'bufmoji--original-name)
+   (midday-predicate :function (midday-matcher-buffer-local-value 'bufmoji--original-name)
                      :type 'keep
                      :name "Keep bufmojified")))
 
-(defun midday-protected-matcher ()
-  (lambda (buf)
-    (buffer-local-value 'midday-protected buf)))
-
-(defun midday-buffer-displayed-matcher ()
+(defun midday-matcher-buffer-displayed ()
   (lambda (buf)
     (get-buffer-window buf)))
 
-(defun midday-empty-buffer-matcher ()
+(defun midday-matcher-empty-buffer ()
   (lambda (buf)
     (zerop (buffer-size buf))))
 
-(defun midday-process-matcher ()
+(defun midday-matcher-process ()
   (lambda (buf)
     (get-buffer-process buf)))
 
-(defun midday-mark-ring-matcher ()
-  (lambda (buf)
-    (with-current-buffer buf
-      mark-ring)))
-
-(defun midday-undo-list-matcher ()
+(defun midday-matcher-undo-list ()
   (lambda (buf)
     (with-current-buffer buf
       (consp buffer-undo-list))))
 
-(defun midday-empty-undo-list-matcher ()
-  (lambda (buf)
-    (with-current-buffer buf
-      (null buffer-undo-list))))
-
-(defun midday-buffer-modified-matcher ()
+(defun midday-matcher-buffer-modified ()
   (lambda (buf)
     (with-current-buffer buf
       (buffer-modified-p))))
 
-(defun midday-major-mode-matcher (mode)
+(defun midday-matcher-major-mode (mode)
   (let ((buf-mode mode))
     (lambda (buf)
       (with-current-buffer buf
         (eq major-mode buf-mode)))))
 
-(defun midday-buffer-name-matcher (name)
+(defun midday-matcher-buffer-name (name)
   (let ((buf-name name))
     (lambda (buf)
       (string= (buffer-name buf) buf-name))))
 
-(defun midday-buffer-name-regexp-matcher (name-regexp)
+(defun midday-matcher-buffer-name-regexp (name-regexp)
   (let ((buf-name-regexp name-regexp))
     (lambda (buf)
       (string-match buf-name-regexp (buffer-name buf)))))
 
-(defun midday-buffer-local-variable-bound-and-set (symbol)
+(defun midday-matcher-buffer-local-value (symbol)
   (lambda (buf)
     (when (buffer-local-boundp symbol buf)
       (buffer-local-value symbol buf))))
@@ -183,9 +170,13 @@ freely add and remove predicates as needed."
     (dolist (pred midday-predicates)
       (unless pred
         (user-error "Nil predicate found in `midday-predicates'"))
-      (when (and (eq (midday-predicate-item-type pred) type)
-                 (funcall (midday-predicate-item-function pred) buf))
-        (throw 'end pred)))))
+      (when (eq (midday-predicate-item-type pred) type)
+        ;; Evaluate the predicate with BUF.
+        (let ((result (funcall (midday-predicate-item-function pred) buf))
+              (negate (midday-predicate-item-negate pred)))
+          (when (or (and result (not negate))
+                    (and (not result) negate)))
+          (throw 'end pred))))))
 
 (defun midday ()
   "Clean up unneeded buffers according to predicates in `midday-predicates'."
@@ -227,8 +218,9 @@ freely add and remove predicates as needed."
 
 (defun midday-protect ()
   "Manually mark the current buffer as protected.
-Use the `midday-protected-matcher' predicate as `keep' to prevent
-midday from killing protected buffers."
+Use the `midday-buffer-local-variable-bound-and-set' predicate as
+`keep' with `midday-protect' to prevent midday from killing protected
+buffers."
   (interactive)
   (setq midday-protected t))
 
