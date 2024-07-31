@@ -44,14 +44,18 @@ non-nil, it should be set to a predicate function, like `y-or-n-p'."
   :type '(choice (const :tag "No confirmation" nil)
                  (function :tag "Confirmation function")))
 
+(defcustom midday-predicates nil
+  "TODO"
+  :type '(repeat (restricted-sexp
+                  :match-alternatives
+                  (midday-predicate-item-p))))
+
 (cl-defstruct midday-predicate-item
   "Structure to hold predicate functions and their type.."
   function type name negate)
 
 (defalias 'midday-predicate #'make-midday-predicate-item
   "Alias to allow easier creation of predicate items.")
-
-(defvar midday-predicates nil)
 
 (defvar midday-debug nil
   "Set to non-nil to enable debug messages.")
@@ -139,20 +143,17 @@ freely add and remove predicates as needed."
       (buffer-modified-p))))
 
 (defun midday-matcher-major-mode (mode)
-  (let ((buf-mode mode))
-    (lambda (buf)
-      (with-current-buffer buf
-        (eq major-mode buf-mode)))))
+  (lambda (buf)
+    (with-current-buffer buf
+      (eq major-mode mode))))
 
 (defun midday-matcher-buffer-name (name)
-  (let ((buf-name name))
-    (lambda (buf)
-      (string= (buffer-name buf) buf-name))))
+  (lambda (buf)
+    (string= (buffer-name buf) name)))
 
 (defun midday-matcher-buffer-name-regexp (name-regexp)
-  (let ((buf-name-regexp name-regexp))
-    (lambda (buf)
-      (string-match buf-name-regexp (buffer-name buf)))))
+  (lambda (buf)
+    (string-match name-regexp (buffer-name buf))))
 
 (defun midday-matcher-buffer-local-value (symbol)
   (lambda (buf)
